@@ -37,7 +37,14 @@ jobs:
         run: |
           echo "Waiting for K3s to be ready..."
           kubectl wait node --all --for=condition=Ready --timeout=120s
-
+      
+      - name: Debug nodes
+        run: |
+          echo "Checking K3s node status..."
+          kubectl get nodes -o wide
+        
+      - name: Sleep to ensure cluster is ready
+        run: sleep 20
 
       - name: Install Ansible
         run: sudo apt-get update && sudo apt-get install -y ansible

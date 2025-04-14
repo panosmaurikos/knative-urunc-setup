@@ -146,7 +146,7 @@
         PATH: "/usr/local/go1.21/go/bin:{{ ansible_env.PATH }}"
 
     - name: Apply knative-custom.yaml
-      command: kubectl apply -f /tmp/serving/knative-custom.yaml
+      command: kubectl apply --validate=false -f /tmp/serving/knative-custom.yaml
 
     # Networking Setup (Kourier) and remaining tasks unchanged
     - name: Install Kourier
