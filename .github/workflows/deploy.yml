@@ -25,7 +25,7 @@ jobs:
           which sudo || echo "sudo not found"
           which tar || echo "tar not found"
           which apt-get || echo "apt-get not found"
-          
+
       - name: Install tar if necessary
         run: |
             if ! command -v tar > /dev/null; then
@@ -41,18 +41,28 @@ jobs:
           curl -sfL https://get.k3s.io | sh -
           sleep 10
 
+      - name: Setup kubeconfig for runner user
+        run: |
+          sudo cp /etc/rancher/k3s/k3s.yaml /home/runner/.kube/config
+          sudo chown runner:runner /home/runner/.kube/config
+          export KUBECONFIG=/home/runner/.kube/config
+
       - name: Wait for K3s to be ready
         run: |
           echo "Waiting for K3s to be ready..."
-          until k3s kubectl get nodes | grep -q " Ready "; do
+          until kubectl get nodes | grep -q " Ready "; do
             echo "Waiting for nodes to be ready..."
             sleep 5
           done
+        env:
+          KUBECONFIG: /home/runner/.kube/config
 
       - name: Debug nodes
         run: |
           echo "Checking K3s node status..."
-          k3s kubectl get nodes -o wide
+          kubectl get nodes -o wide
+        env:
+          KUBECONFIG: /home/runner/.kube/config
 
       - name: Sleep to ensure cluster is ready
         run: sleep 20
