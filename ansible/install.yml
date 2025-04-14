@@ -1,0 +1,254 @@
+---
+- name: Install Docker, Go 1.21, ko, Knative with urunc, urunc-deploy in k3s, and sample services
+  hosts: all
+  become: yes  # This enables sudo privileges
+  vars:
+    go_version: "1.21.5"
+    ko_version: "0.15.1"
+    ko_os: "Linux"
+    ko_arch: "x86_64"
+    ko_docker_repo: "harbor.nbfc.io/nubificus/knative-install-urunc"
+    harbor_username: "{{ lookup('env', 'HARBOR_USERNAME') | default('your_harbor_username', true) }}"
+    harbor_password: "{{ lookup('env', 'HARBOR_PASSWORD') | default('your_harbor_password', true) }}"
+
+  tasks:
+    # Docker Installation Tasks (unchanged)
+    - name: Update apt package index
+      apt:
+        update_cache: yes
+
+    - name: Install prerequisite packages for Docker
+      apt:
+        name:
+          - ca-certificates
+          - curl
+        state: present
+
+    - name: Create keyrings directory
+      file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: '0755'
+
+    - name: Add Docker GPG key
+      shell: curl -fsSL https://download.docker.com/linux/ubuntu/gpg | tee /etc/apt/keyrings/docker.asc > /dev/null
+      args:
+        creates: /etc/apt/keyrings/docker.asc
+
+    - name: Set permissions for Docker GPG key
+      file:
+        path: /etc/apt/keyrings/docker.asc
+        mode: '0644'
+
+    - name: Add Docker repository
+      shell: >
+        echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] 
+        https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}") stable" | 
+        tee /etc/apt/sources.list.d/docker.list > /dev/null
+      args:
+        creates: /etc/apt/sources.list.d/docker.list
+
+    - name: Update apt and install Docker
+      apt:
+        update_cache: yes
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+        state: present
+
+    - name: Login to Harbor registry
+      docker_login:
+        registry: "https://harbor.nbfc.io"
+        username: "{{ harbor_username }}"
+        password: "{{ harbor_password }}"
+      when: harbor_username != 'your_harbor_username' and harbor_password != 'your_harbor_password'
+
+    # Go Installation Tasks (unchanged)
+    - name: Create Go installation directory
+      file:
+        path: /usr/local/go1.21
+        state: directory
+        mode: '0755'
+
+    - name: Download Go {{ go_version }}
+      get_url:
+        url: "https://go.dev/dl/go{{ go_version }}.linux-amd64.tar.gz"
+        dest: "/tmp/go{{ go_version }}.linux-amd64.tar.gz"
+
+    - name: Extract Go archive
+      unarchive:
+        src: "/tmp/go{{ go_version }}.linux-amd64.tar.gz"
+        dest: /usr/local/go1.21/
+        remote_src: yes
+
+    - name: Remove Go archive
+      file:
+        path: "/tmp/go{{ go_version }}.linux-amd64.tar.gz"
+        state: absent
+
+    - name: Set Go environment variables
+      lineinfile:
+        path: /etc/profile.d/go.sh
+        create: yes
+        mode: '0644'
+        line: "{{ item }}"
+      loop:
+        - "export GOROOT=/usr/local/go1.21/go"
+        - "export PATH=$GOROOT/bin:$PATH"
+        - "export GOPATH=$HOME/go"
+
+    - name: Verify Go version
+      command: /usr/local/go1.21/go/bin/go version
+      register: go_version_output
+      changed_when: false
+
+    - name: Display Go version
+      debug:
+        msg: "{{ go_version_output.stdout }}"
+
+    # ko Installation Tasks (unchanged)
+    - name: Download ko {{ ko_version }}
+      get_url:
+        url: "https://github.com/ko-build/ko/releases/download/v{{ ko_version }}/ko_{{ ko_version }}_{{ ko_os }}_{{ ko_arch }}.tar.gz"
+        dest: "/tmp/ko.tar.gz"
+
+    - name: Extract ko archive to /usr/local/bin
+      unarchive:
+        src: "/tmp/ko.tar.gz"
+        dest: /usr/local/bin
+        remote_src: yes
+
+    - name: Remove ko archive
+      file:
+        path: "/tmp/ko.tar.gz"
+        state: absent
+
+    # Knative Serving with urunc Tasks
+    - name: Install git
+      apt:
+        name:
+          - git
+        state: present
+
+    - name: Clone urunc-enabled Knative Serving
+      git:
+        repo: https://github.com/nubificus/serving
+        dest: /tmp/serving
+        version: feat_urunc
+
+    - name: Run ko resolve to generate knative-custom.yaml
+      shell: ko resolve -Rf ./config/core/ > knative-custom.yaml
+      args:
+        chdir: /tmp/serving
+      environment:
+        KO_DOCKER_REPO: "{{ ko_docker_repo }}"
+        PATH: "/usr/local/go1.21/go/bin:{{ ansible_env.PATH }}"
+
+    - name: Apply knative-custom.yaml
+      command: kubectl apply -f /tmp/serving/knative-custom.yaml
+
+    # Networking Setup (Kourier) and remaining tasks unchanged
+    - name: Install Kourier
+      command: kubectl apply -f https://github.com/knative/net-kourier/releases/latest/download/kourier.yaml
+
+    - name: Patch config-network for Kourier
+      command: >
+        kubectl patch configmap/config-network -n knative-serving --type merge -p 
+        '{"data":{"ingress.class":"kourier.ingress.networking.knative.dev"}}'
+
+    - name: Patch config-domain
+      command: >
+        kubectl patch configmap/config-domain -n knative-serving --type merge -p 
+        '{"data":{"127.0.0.1.nip.io":""}}'
+
+    # urunc-deploy in k3s Tasks
+    - name: Clone urunc repository
+      git:
+        repo: "https://github.com/nubificus/urunc.git"
+        dest: "/opt/urunc"
+        update: yes
+
+    - name: Apply urunc RBAC
+      command: kubectl apply -f /opt/urunc/deployment/urunc-deploy/urunc-rbac/urunc-rbac.yaml
+
+    - name: Apply urunc-deploy DaemonSet with k3s overlay
+      command: kubectl apply -k /opt/urunc/deployment/urunc-deploy/urunc-deploy/overlays/k3s
+
+    - name: Apply urunc RuntimeClass
+      command: kubectl apply -f /opt/urunc/deployment/urunc-deploy/runtimeclasses/runtimeclass.yaml
+
+    # Enable runtimeClass, nodeSelector, and affinity in Knative
+    - name: Patch Knative config-features
+      command: >
+        kubectl patch configmap/config-features --namespace knative-serving --type merge --patch '{"data":{
+          "kubernetes.podspec-affinity":"enabled",
+          "kubernetes.podspec-runtimeclassname":"enabled",
+          "kubernetes.podspec-nodeselector":"enabled"
+        }}'
+
+    # Deploy Sample urunc Service
+    - name: Download sample service manifest
+      get_url:
+        url: "https://raw.githubusercontent.com/nubificus/openinfradayshu-demos/main/serverless-sandboxes/service-container-hello.yaml"
+        dest: "/tmp/service-container-hello.yaml"
+
+    - name: Create openinfra namespace (via kubectl)
+      command: kubectl create namespace openinfra
+      ignore_errors: yes
+
+    - name: Apply sample service manifest
+      command: kubectl apply -f /tmp/service-container-hello.yaml
+
+    # Deploy urunc-compatible Function
+    - name: Create urunc-function.yaml
+      copy:
+        content: |
+          apiVersion: serving.knative.dev/v1
+          kind: Service
+          metadata:
+            name: http-c-urunc
+            namespace: default
+          spec:
+            template:
+              spec:
+                runtimeClassName: "urunc"
+                containers:
+                  - image: harbor.nbfc.io/nubificus/knative/http-c:qemu-urunc
+                    imagePullPolicy: IfNotPresent
+                    ports:
+                      - containerPort: 8080
+                        protocol: TCP
+                    resources:
+                      requests:
+                        cpu: 10m
+        dest: "/tmp/urunc-function.yaml"
+
+    - name: Apply urunc-function manifest
+      command: kubectl apply -f /tmp/urunc-function.yaml
+
+    - name: Wait for http-c-urunc Knative Service to be ready
+      command: kubectl get ksvc http-c-urunc -n default -o jsonpath="{.status.conditions[?(@.type=='Ready')].status}"
+      register: service_ready
+      until: service_ready.stdout == "True"
+      retries: 10
+      delay: 6
+      changed_when: false
+
+    - name: Wait for hellocontainer Knative Service to be ready
+      command: kubectl get ksvc hellocontainer -n openinfra -o jsonpath="{.status.conditions[?(@.type=='Ready')].status}"
+      register: container_ready
+      until: container_ready.stdout == "True"
+      retries: 10
+      delay: 6
+      changed_when: false
+
+    # Check Knative Services
+    - name: Get Knative Services
+      command: kubectl get ksvc -A -o wide
+      register: ksvc_output
+      changed_when: false
+
+    - name: Display Knative Services
+      debug:
+        msg: "{{ ksvc_output.stdout_lines }}"
