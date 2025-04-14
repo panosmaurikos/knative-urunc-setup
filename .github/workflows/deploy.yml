@@ -14,74 +14,58 @@ jobs:
       KO_OS: Linux
       KO_ARCH: x86_64
       KO_DOCKER_REPO: harbor.nbfc.io/nubificus/knative-install-urunc
-      PATH: "/usr/local/go1.21/go/bin:/usr/local/bin:{{ ansible_env.PATH }}"
       HARBOR_USERNAME: ${{ secrets.HARBOR_USERNAME }}
       HARBOR_PASSWORD: ${{ secrets.HARBOR_PASSWORD }}
 
     steps:
-      # Add this step to ensure tar and other essentials are installed
-      - name: Install prerequisites
+      - name: Debug environment
         run: |
-          echo "[INFO] Installing prerequisites..."
-          sudo apt-get update
-          sudo apt-get install -y tar
+          echo "User: $(whoami)"
+          echo "PATH: $PATH"
+          which sudo || echo "sudo not found"
+          which tar || echo "tar not found"
+          which apt-get || echo "apt-get not found"
+          
+      - name: Install tar if necessary
+        run: |
+            if ! command -v tar > /dev/null; then
+              apt-get update
+              apt-get install -y tar
+            fi
 
       - name: Checkout code
         uses: actions/checkout@v3
 
       - name: Install K3s (Single-node)
         run: |
-          echo "[INFO] Installing K3s..."
           curl -sfL https://get.k3s.io | sh -
           sleep 10
-          echo "[INFO] Installed K3s. Checking services..."
-          sudo systemctl status k3s || true
-          sudo chmod 644 /etc/rancher/k3s/k3s.yaml
-
-      - name: Export kubeconfig
-        run: |
-          echo "[INFO] Exporting kubeconfig..."
-          mkdir -p ~/.kube
-          sudo cp /etc/rancher/k3s/k3s.yaml ~/.kube/config
-          sudo chown $USER:$USER ~/.kube/config
-          echo "[INFO] KUBECONFIG contents:"
-          cat ~/.kube/config
-
-      - name: Print cluster-info and config
-        run: |
-          echo "[INFO] Cluster info:"
-          kubectl cluster-info || echo "Cluster not ready yet"
-          echo "[INFO] Kubeconfig:"
-          kubectl config view
 
       - name: Wait for K3s to be ready
         run: |
           echo "Waiting for K3s to be ready..."
-          for i in {1..30}; do
-            kubectl get nodes && break
-            echo "K3s not ready yet... retrying ($i/30)"
+          until k3s kubectl get nodes | grep -q " Ready "; do
+            echo "Waiting for nodes to be ready..."
             sleep 5
           done
 
-      - name: Show current node status
+      - name: Debug nodes
         run: |
-          echo "[DEBUG] Nodes:"
-          kubectl get nodes -o wide
+          echo "Checking K3s node status..."
+          k3s kubectl get nodes -o wide
 
       - name: Sleep to ensure cluster is ready
-        run: |
-          echo "[INFO] Extra delay to ensure stability..."
-          sleep 10
+        run: sleep 20
 
       - name: Install Ansible
         run: |
-          echo "[INFO] Installing Ansible..."
-          sudo apt-get update && sudo apt-get install -y ansible
+          apt-get update
+          apt-get install -y ansible
 
       - name: Run Ansible Playbook
         run: |
-          echo "[INFO] Running Ansible Playbook..."
           ansible-playbook -i localhost, -c local ansible/install.yml
         env:
           HARBOR_USERNAME: ${{ secrets.HARBOR_USERNAME }}
           HARBOR_PASSWORD: ${{ secrets.HARBOR_PASSWORD }}
+          KUBECONFIG: /etc/rancher/k3s/k3s.yaml
