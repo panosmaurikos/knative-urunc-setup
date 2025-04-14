@@ -22,6 +22,7 @@
         name:
           - ca-certificates
           - curl
+          -  python3-pip
         state: present
 
     - name: Create keyrings directory
@@ -138,15 +139,15 @@
         version: feat_urunc
 
     - name: Run ko resolve to generate knative-custom.yaml
-      shell: ko resolve -Rf ./config/core/ > knative-custom.yaml
-      args:
-        chdir: /tmp/serving
-      environment:
-        KO_DOCKER_REPO: "{{ ko_docker_repo }}"
-        PATH: "/usr/local/go1.21/go/bin:{{ ansible_env.PATH }}"
+      shell: |
+        export KO_DOCKER_REPO="{{ ko_docker_repo }}"
+        export PATH="/usr/local/go1.21/go/bin:$PATH"
+        cd /tmp/serving
+        ko resolve -Rf ./config/core/ > knative-custom.yaml
+
 
     - name: Apply knative-custom.yaml
-      command: kubectl apply --validate=false -f /tmp/serving/knative-custom.yaml
+      command: kubectl --kubeconfig /root/.kube/config apply --validate=false -f /tmp/serving/knative-custom.yaml
 
     # Networking Setup (Kourier) and remaining tasks unchanged
     - name: Install Kourier

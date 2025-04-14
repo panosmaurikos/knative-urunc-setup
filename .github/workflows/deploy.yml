@@ -29,8 +29,8 @@ jobs:
       - name: Install tar if necessary
         run: |
           if ! command -v tar > /dev/null; then
-            apt-get update
-            apt-get install -y tar
+            sudo apt-get update
+            sudo apt-get install -y tar
           fi
 
       - name: Checkout code
@@ -41,12 +41,18 @@ jobs:
           curl -sfL https://get.k3s.io | sh -
           sleep 10
 
-      - name: Setup kubeconfig for runner user
+      - name: Setup kubeconfig for all users
         run: |
           mkdir -p /home/runner/.kube
           sudo cp /etc/rancher/k3s/k3s.yaml /home/runner/.kube/config
           sudo chown runner:runner /home/runner/.kube/config
           export KUBECONFIG=/home/runner/.kube/config
+          
+          # Fix kubeconfig for root and other users
+          sudo mkdir -p /root/.kube
+          sudo cp /home/runner/.kube/config /root/.kube/config
+          sudo sed -i "s/127.0.0.1/$(curl -s ifconfig.me)/g" /root/.kube/config
+          sudo sed -i "s/localhost/$(curl -s ifconfig.me)/g" /home/runner/.kube/config
 
       - name: Wait for K3s to be ready
         run: |
@@ -62,16 +68,18 @@ jobs:
         run: |
           echo "Checking K3s node status..."
           kubectl get nodes -o wide
+          kubectl cluster-info
         env:
           KUBECONFIG: /home/runner/.kube/config
 
       - name: Sleep to ensure cluster is ready
         run: sleep 20
 
-      - name: Install Ansible
+      - name: Install Ansible and dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y ansible
+          sudo apt-get install -y ansible python3-pip
+          sudo pip3 install kubernetes
 
       - name: Run Ansible Playbook
         run: |
@@ -79,5 +87,4 @@ jobs:
         env:
           HARBOR_USERNAME: ${{ secrets.HARBOR_USERNAME }}
           HARBOR_PASSWORD: ${{ secrets.HARBOR_PASSWORD }}
-          #KUBECONFIG: /etc/rancher/k3s/k3s.yaml
           KUBECONFIG: /home/runner/.kube/config
