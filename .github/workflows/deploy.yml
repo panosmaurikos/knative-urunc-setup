@@ -28,10 +28,10 @@ jobs:
 
       - name: Install tar if necessary
         run: |
-            if ! command -v tar > /dev/null; then
-              apt-get update
-              apt-get install -y tar
-            fi
+          if ! command -v tar > /dev/null; then
+            apt-get update
+            apt-get install -y tar
+          fi
 
       - name: Checkout code
         uses: actions/checkout@v3
@@ -43,6 +43,7 @@ jobs:
 
       - name: Setup kubeconfig for runner user
         run: |
+          mkdir -p /home/runner/.kube
           sudo cp /etc/rancher/k3s/k3s.yaml /home/runner/.kube/config
           sudo chown runner:runner /home/runner/.kube/config
           export KUBECONFIG=/home/runner/.kube/config
