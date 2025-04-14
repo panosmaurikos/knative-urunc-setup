@@ -79,4 +79,5 @@ jobs:
         env:
           HARBOR_USERNAME: ${{ secrets.HARBOR_USERNAME }}
           HARBOR_PASSWORD: ${{ secrets.HARBOR_PASSWORD }}
-          KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+          #KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+          KUBECONFIG: /home/runner/.kube/config
