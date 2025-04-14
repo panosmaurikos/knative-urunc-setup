@@ -47,12 +47,9 @@ jobs:
           sudo cp /etc/rancher/k3s/k3s.yaml /home/runner/.kube/config
           sudo chown runner:runner /home/runner/.kube/config
           export KUBECONFIG=/home/runner/.kube/config
-          
-          # Fix kubeconfig for root and other users
           sudo mkdir -p /root/.kube
-          sudo cp /home/runner/.kube/config /root/.kube/config
-          sudo sed -i "s/127.0.0.1/$(curl -s ifconfig.me)/g" /root/.kube/config
-          sudo sed -i "s/localhost/$(curl -s ifconfig.me)/g" /home/runner/.kube/config
+          sudo cp /etc/rancher/k3s/k3s.yaml /root/.kube/config
+          sudo chown root:root /root/.kube/config
 
       - name: Wait for K3s to be ready
         run: |
